@@ -2,29 +2,73 @@ require('dotenv').config();
 const express = require('express');
 const app = express();
 const OpenAI = require('openai');
+const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use('/audio', express.static(path.join(__dirname, 'audio')));
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const conversationHistory = {};
+
+// Audio folder banana
+if (!fs.existsSync('./audio')) fs.mkdirSync('./audio');
+
+// ElevenLabs se audio generate karo
+async function generateSpeech(text, filename) {
+  const voiceId = 'TYKLc7ViOIGE13dSZYlK'; // Rachel
+  const response = await axios({
+    method: 'post',
+    url: `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+    headers: {
+      'xi-api-key': process.env.ELEVENLABS_API_KEY,
+      'Content-Type': 'application/json'
+    },
+    data: {
+      text: text,
+      model_id: 'eleven_multilingual_v2',
+      voice_settings: { stability: 0.5, similarity_boost: 0.75 }
+    },
+    responseType: 'arraybuffer'
+  });
+
+  fs.writeFileSync(`./audio/${filename}.mp3`, response.data);
+}
 
 app.get('/', (req, res) => {
   res.send('FM Agent Server Running!');
 });
 
-app.post('/incoming-call', (req, res) => {
+app.post('/incoming-call', async (req, res) => {
   const callSid = req.body.CallSid;
   conversationHistory[callSid] = [];
 
-  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+  const greetingText = "Assalamu Alaikum! Thank you for calling Al Qiraat Al Jadedah Technical Services. This is Nour speaking, how may I help you today?";
+
+  try {
+    await generateSpeech(greetingText, callSid + '_greeting');
+    const audioUrl = `${process.env.SERVER_URL}/audio/${callSid}_greeting.mp3`;
+
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="alice" language="en-US">Assalamu Alaikum! Thank you for calling Al Qiraat Al Jadedah Technical Services. This is Nour speaking, how may I help you today?</Say>
+  <Play>${audioUrl}</Play>
   <Gather input="speech" action="/respond" speechTimeout="3" language="en-IN"/>
 </Response>`;
 
-  res.type('text/xml');
-  res.send(twiml);
+    res.type('text/xml');
+    res.send(twiml);
+  } catch (err) {
+    console.error('ElevenLabs error:', err.message);
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="alice">${greetingText}</Say>
+  <Gather input="speech" action="/respond" speechTimeout="3" language="en-IN"/>
+</Response>`;
+    res.type('text/xml');
+    res.send(twiml);
+  }
 });
 
 app.post('/respond', async (req, res) => {
@@ -34,13 +78,26 @@ app.post('/respond', async (req, res) => {
   console.log('User said:', userSpeech);
 
   if (!userSpeech || userSpeech.trim() === '') {
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+    const sorryText = "I'm sorry, I didn't catch that. Could you please repeat?";
+    try {
+      await generateSpeech(sorryText, callSid + '_sorry');
+      const audioUrl = `${process.env.SERVER_URL}/audio/${callSid}_sorry.mp3`;
+      const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="alice" language="en-US">I'm sorry, I didn't catch that. Could you please repeat?</Say>
+  <Play>${audioUrl}</Play>
   <Gather input="speech" action="/respond" speechTimeout="3" language="en-IN"/>
 </Response>`;
-    res.type('text/xml');
-    return res.send(twiml);
+      res.type('text/xml');
+      return res.send(twiml);
+    } catch {
+      const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="alice">${sorryText}</Say>
+  <Gather input="speech" action="/respond" speechTimeout="3" language="en-IN"/>
+</Response>`;
+      res.type('text/xml');
+      return res.send(twiml);
+    }
   }
 
   if (!conversationHistory[callSid]) conversationHistory[callSid] = [];
@@ -77,9 +134,12 @@ Important rules:
 
     const shouldHangup = /\bGoodbye\b/i.test(aiResponse) && /\bThank you for calling\b/i.test(aiResponse);
 
+    await generateSpeech(aiResponse, callSid + '_response');
+    const audioUrl = `${process.env.SERVER_URL}/audio/${callSid}_response.mp3`;
+
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="alice" language="en-US">${aiResponse}</Say>
+  <Play>${audioUrl}</Play>
   ${shouldHangup ? '<Hangup/>' : '<Gather input="speech" action="/respond" speechTimeout="3" language="en-IN"/>'}
 </Response>`;
 
