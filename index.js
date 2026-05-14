@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const app = express();
 const OpenAI = require('openai');
+const Groq = require('groq-sdk');
 const fs = require('fs');
 const path = require('path');
 
@@ -10,8 +11,8 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/audio', express.static(path.join(__dirname, 'audio')));
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const conversationHistory = {};
-const pendingResponses = {};
 
 if (!fs.existsSync('./audio')) fs.mkdirSync('./audio');
 
@@ -33,9 +34,8 @@ app.post('/incoming-call', async (req, res) => {
   const callSid = req.body.CallSid;
   conversationHistory[callSid] = [];
 
-  // Pehle se greeting generate karo
   const greetingText = "Assalamu Alaikum! Thank you for calling Al Qiraat Al Jadedah Technical Services. This is Nour speaking, how may I help you today?";
-  
+
   try {
     await generateSpeech(greetingText, callSid + '_greeting');
     const audioUrl = `${process.env.SERVER_URL}/audio/${callSid}_greeting.mp3`;
@@ -66,22 +66,35 @@ app.post('/respond', async (req, res) => {
   console.log('User said:', userSpeech);
 
   if (!userSpeech || userSpeech.trim() === '') {
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+    const sorryText = "I'm sorry, I didn't catch that. Could you please repeat?";
+    try {
+      await generateSpeech(sorryText, callSid + '_sorry');
+      const audioUrl = `${process.env.SERVER_URL}/audio/${callSid}_sorry.mp3`;
+      const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="Polly.Aditi" language="hi-IN">Mujhe suna nahi, kya aap dobara bol sakte hain?</Say>
+  <Play>${audioUrl}</Play>
   <Gather input="speech" action="/respond" speechTimeout="5" timeout="10" language="en-IN"/>
 </Response>`;
-    res.type('text/xml');
-    return res.send(twiml);
+      res.type('text/xml');
+      return res.send(twiml);
+    } catch {
+      const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="Polly.Aditi">Mujhe suna nahi, kya aap dobara bol sakte hain?</Say>
+  <Gather input="speech" action="/respond" speechTimeout="5" timeout="10" language="en-IN"/>
+</Response>`;
+      res.type('text/xml');
+      return res.send(twiml);
+    }
   }
 
   if (!conversationHistory[callSid]) conversationHistory[callSid] = [];
   conversationHistory[callSid].push({ role: 'user', content: userSpeech });
 
   try {
-    // GPT aur TTS ek saath chalao
-    const completionPromise = openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+    // Groq - bahut fast response
+    const completion = await groq.chat.completions.create({
+      model: 'llama3-8b-8192',
       messages: [
         {
           role: 'system',
@@ -103,7 +116,6 @@ Important rules:
       max_tokens: 100
     });
 
-    const completion = await completionPromise;
     const aiResponse = completion.choices[0].message.content;
     conversationHistory[callSid].push({ role: 'assistant', content: aiResponse });
     console.log('Nour said:', aiResponse);
