@@ -2,12 +2,28 @@ require('dotenv').config();
 const express = require('express');
 const app = express();
 const OpenAI = require('openai');
+const fs = require('fs');
+const path = require('path');
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use('/audio', express.static(path.join(__dirname, 'audio')));
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const conversationHistory = {};
+const pendingResponses = {};
+
+if (!fs.existsSync('./audio')) fs.mkdirSync('./audio');
+
+async function generateSpeech(text, filename) {
+  const mp3 = await openai.audio.speech.create({
+    model: 'tts-1',
+    voice: 'nova',
+    input: text,
+  });
+  const buffer = Buffer.from(await mp3.arrayBuffer());
+  fs.writeFileSync(`./audio/${filename}.mp3`, buffer);
+}
 
 app.get('/', (req, res) => {
   res.send('FM Agent Server Running!');
@@ -17,14 +33,30 @@ app.post('/incoming-call', async (req, res) => {
   const callSid = req.body.CallSid;
   conversationHistory[callSid] = [];
 
-  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="Polly.Aditi" language="hi-IN">Assalamu Alaikum! Al Qiraat Al Jadedah Technical Services mein aapka swagat hai. Main Nour bol rahi hun, aap ki kya madad kar sakti hun?</Say>
-  <Gather input="speech" action="/respond" speechTimeout="3" language="hi-IN"/>
-</Response>`;
+  // Pehle se greeting generate karo
+  const greetingText = "Assalamu Alaikum! Thank you for calling Al Qiraat Al Jadedah Technical Services. This is Nour speaking, how may I help you today?";
+  
+  try {
+    await generateSpeech(greetingText, callSid + '_greeting');
+    const audioUrl = `${process.env.SERVER_URL}/audio/${callSid}_greeting.mp3`;
 
-  res.type('text/xml');
-  res.send(twiml);
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Play>${audioUrl}</Play>
+  <Gather input="speech" action="/respond" speechTimeout="5" timeout="10" language="en-IN"/>
+</Response>`;
+    res.type('text/xml');
+    res.send(twiml);
+  } catch (err) {
+    console.error('TTS error:', err.message);
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="Polly.Aditi">${greetingText}</Say>
+  <Gather input="speech" action="/respond" speechTimeout="5" timeout="10" language="en-IN"/>
+</Response>`;
+    res.type('text/xml');
+    res.send(twiml);
+  }
 });
 
 app.post('/respond', async (req, res) => {
@@ -37,7 +69,7 @@ app.post('/respond', async (req, res) => {
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="Polly.Aditi" language="hi-IN">Mujhe suna nahi, kya aap dobara bol sakte hain?</Say>
-  <Gather input="speech" action="/respond" speechTimeout="3" language="hi-IN"/>
+  <Gather input="speech" action="/respond" speechTimeout="5" timeout="10" language="en-IN"/>
 </Response>`;
     res.type('text/xml');
     return res.send(twiml);
@@ -47,7 +79,8 @@ app.post('/respond', async (req, res) => {
   conversationHistory[callSid].push({ role: 'user', content: userSpeech });
 
   try {
-    const completion = await openai.chat.completions.create({
+    // GPT aur TTS ek saath chalao
+    const completionPromise = openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
         {
@@ -62,24 +95,28 @@ Important rules:
   * Customer speaks English → Reply in English only
   * Customer speaks Arabic → Reply in Arabic only
 - Be warm, friendly and professional.
-- Keep responses short — maximum 2 sentences.
+- Keep responses very short — maximum 1-2 sentences.
 - Only say "Thank you for calling. Goodbye!" when customer explicitly says they want to end the call.`
         },
         ...conversationHistory[callSid]
       ],
-      max_tokens: 150
+      max_tokens: 100
     });
 
+    const completion = await completionPromise;
     const aiResponse = completion.choices[0].message.content;
     conversationHistory[callSid].push({ role: 'assistant', content: aiResponse });
     console.log('Nour said:', aiResponse);
 
     const shouldHangup = /\bGoodbye\b/i.test(aiResponse);
 
+    await generateSpeech(aiResponse, callSid + '_response');
+    const audioUrl = `${process.env.SERVER_URL}/audio/${callSid}_response.mp3`;
+
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="Polly.Aditi" language="hi-IN">${aiResponse}</Say>
-  ${shouldHangup ? '<Hangup/>' : '<Gather input="speech" action="/respond" speechTimeout="3" language="hi-IN"/>'}
+  <Play>${audioUrl}</Play>
+  ${shouldHangup ? '<Hangup/>' : '<Gather input="speech" action="/respond" speechTimeout="5" timeout="10" language="en-IN"/>'}
 </Response>`;
 
     res.type('text/xml');
@@ -90,7 +127,7 @@ Important rules:
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="Polly.Aditi">Sorry, please try again.</Say>
-  <Gather input="speech" action="/respond" speechTimeout="3" language="hi-IN"/>
+  <Gather input="speech" action="/respond" speechTimeout="5" timeout="10" language="en-IN"/>
 </Response>`;
     res.type('text/xml');
     res.send(twiml);
