@@ -2,7 +2,6 @@ require('dotenv').config();
 const express = require('express');
 const app = express();
 const OpenAI = require('openai');
-const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 
@@ -13,28 +12,17 @@ app.use('/audio', express.static(path.join(__dirname, 'audio')));
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const conversationHistory = {};
 
-// Audio folder banana
 if (!fs.existsSync('./audio')) fs.mkdirSync('./audio');
 
-// ElevenLabs se audio generate karo
+// OpenAI TTS se audio generate karo
 async function generateSpeech(text, filename) {
-  const voiceId = 'TYKLc7ViOIGE13dSZYlK'; // Rachel
-  const response = await axios({
-    method: 'post',
-    url: `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
-    headers: {
-      'xi-api-key': process.env.ELEVENLABS_API_KEY,
-      'Content-Type': 'application/json'
-    },
-    data: {
-      text: text,
-      model_id: 'eleven_multilingual_v2',
-      voice_settings: { stability: 0.5, similarity_boost: 0.75 }
-    },
-    responseType: 'arraybuffer'
+  const mp3 = await openai.audio.speech.create({
+    model: 'tts-1',
+    voice: 'nova', // Female voice — Nour ke liye perfect
+    input: text,
   });
-
-  fs.writeFileSync(`./audio/${filename}.mp3`, response.data);
+  const buffer = Buffer.from(await mp3.arrayBuffer());
+  fs.writeFileSync(`./audio/${filename}.mp3`, buffer);
 }
 
 app.get('/', (req, res) => {
@@ -56,11 +44,10 @@ app.post('/incoming-call', async (req, res) => {
   <Play>${audioUrl}</Play>
   <Gather input="speech" action="/respond" speechTimeout="3" language="en-IN"/>
 </Response>`;
-
     res.type('text/xml');
     res.send(twiml);
   } catch (err) {
-    console.error('ElevenLabs error:', err.message);
+    console.error('TTS error:', err.message);
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="alice">${greetingText}</Say>
