@@ -20,7 +20,7 @@ app.post('/incoming-call', (req, res) => {
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="Polly.Joanna-Neural">Assalamu Alaikum! Thank you for calling Al Qiraat Al Jadedah Technical Services. This is Nour speaking, how may I help you today?</Say>
-  <Gather input="speech" action="/respond" speechTimeout="5" timeout="10" language="en-IN"/>
+  <Gather input="speech" action="/respond" speechTimeout="2" timeout="10" language="en-IN"/>
 </Response>`;
 
   res.type('text/xml');
