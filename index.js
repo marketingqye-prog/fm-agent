@@ -1,62 +1,30 @@
 require('dotenv').config();
 const express = require('express');
 const app = express();
-const OpenAI = require('openai');
 const Groq = require('groq-sdk');
-const fs = require('fs');
-const path = require('path');
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use('/audio', express.static(path.join(__dirname, 'audio')));
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const conversationHistory = {};
-
-if (!fs.existsSync('./audio')) fs.mkdirSync('./audio');
-
-async function generateSpeech(text, filename) {
-  const mp3 = await openai.audio.speech.create({
-    model: 'tts-1',
-    voice: 'nova',
-    input: text,
-  });
-  const buffer = Buffer.from(await mp3.arrayBuffer());
-  fs.writeFileSync(`./audio/${filename}.mp3`, buffer);
-}
 
 app.get('/', (req, res) => {
   res.send('FM Agent Server Running!');
 });
 
-app.post('/incoming-call', async (req, res) => {
+app.post('/incoming-call', (req, res) => {
   const callSid = req.body.CallSid;
   conversationHistory[callSid] = [];
 
-  const greetingText = "Assalamu Alaikum! Thank you for calling Al Qiraat Al Jadedah Technical Services. This is Nour speaking, how may I help you today?";
-
-  try {
-    await generateSpeech(greetingText, callSid + '_greeting');
-    const audioUrl = `${process.env.SERVER_URL}/audio/${callSid}_greeting.mp3`;
-
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Play>${audioUrl}</Play>
+  <Say voice="Polly.Joanna-Neural">Assalamu Alaikum! Thank you for calling Al Qiraat Al Jadedah Technical Services. This is Nour speaking, how may I help you today?</Say>
   <Gather input="speech" action="/respond" speechTimeout="5" timeout="10" language="en-IN"/>
 </Response>`;
-    res.type('text/xml');
-    res.send(twiml);
-  } catch (err) {
-    console.error('TTS error:', err.message);
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="Polly.Aditi">${greetingText}</Say>
-  <Gather input="speech" action="/respond" speechTimeout="5" timeout="10" language="en-IN"/>
-</Response>`;
-    res.type('text/xml');
-    res.send(twiml);
-  }
+
+  res.type('text/xml');
+  res.send(twiml);
 });
 
 app.post('/respond', async (req, res) => {
@@ -66,33 +34,19 @@ app.post('/respond', async (req, res) => {
   console.log('User said:', userSpeech);
 
   if (!userSpeech || userSpeech.trim() === '') {
-    const sorryText = "I'm sorry, I didn't catch that. Could you please repeat?";
-    try {
-      await generateSpeech(sorryText, callSid + '_sorry');
-      const audioUrl = `${process.env.SERVER_URL}/audio/${callSid}_sorry.mp3`;
-      const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Play>${audioUrl}</Play>
+  <Say voice="Polly.Joanna-Neural">I am sorry, I did not catch that. Could you please repeat?</Say>
   <Gather input="speech" action="/respond" speechTimeout="5" timeout="10" language="en-IN"/>
 </Response>`;
-      res.type('text/xml');
-      return res.send(twiml);
-    } catch {
-      const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="Polly.Aditi">Mujhe suna nahi, kya aap dobara bol sakte hain?</Say>
-  <Gather input="speech" action="/respond" speechTimeout="5" timeout="10" language="en-IN"/>
-</Response>`;
-      res.type('text/xml');
-      return res.send(twiml);
-    }
+    res.type('text/xml');
+    return res.send(twiml);
   }
 
   if (!conversationHistory[callSid]) conversationHistory[callSid] = [];
   conversationHistory[callSid].push({ role: 'user', content: userSpeech });
 
   try {
-    // Groq - bahut fast response
     const completion = await groq.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
       messages: [
@@ -122,12 +76,9 @@ Important rules:
 
     const shouldHangup = /\bGoodbye\b/i.test(aiResponse);
 
-    await generateSpeech(aiResponse, callSid + '_response');
-    const audioUrl = `${process.env.SERVER_URL}/audio/${callSid}_response.mp3`;
-
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Play>${audioUrl}</Play>
+  <Say voice="Polly.Joanna-Neural">${aiResponse}</Say>
   ${shouldHangup ? '<Hangup/>' : '<Gather input="speech" action="/respond" speechTimeout="5" timeout="10" language="en-IN"/>'}
 </Response>`;
 
@@ -138,7 +89,7 @@ Important rules:
     console.error('Error:', error.message);
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="Polly.Aditi">Sorry, please try again.</Say>
+  <Say voice="Polly.Joanna-Neural">Sorry, please try again.</Say>
   <Gather input="speech" action="/respond" speechTimeout="5" timeout="10" language="en-IN"/>
 </Response>`;
     res.type('text/xml');
