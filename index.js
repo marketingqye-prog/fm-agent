@@ -168,7 +168,7 @@ app.post('/call-status', async (req, res) => {
   const callSid = req.body.CallSid;
   const callStatus = req.body.CallStatus;
 
-  if ((callStatus === 'completed' || callStatus === 'no-answer') && callData[callSid]) {
+  if ((callStatus === 'completed' || callStatus === 'no-answer' || callStatus === 'canceled' || callStatus === 'failed') && callData[callSid]) {
     const duration = Math.floor((new Date() - callData[callSid].startTime) / 1000);
     await createZohoLead(
       callData[callSid].phone,
