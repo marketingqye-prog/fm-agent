@@ -114,7 +114,7 @@ Important rules:
   * Customer speaks Arabic → Reply in Arabic only
 - Be warm, friendly and professional.
 - Keep responses very short — maximum 1-2 sentences.
-- Only say "Thank you for calling. Goodbye!" when customer explicitly says they want to end the call.`
+- Only say "Thank you for calling. Goodbye!" when customer explicitly uses words like "bye", "goodbye", "end call". Never say Goodbye on your own.`
         },
         ...conversationHistory[callSid]
       ],
@@ -146,7 +146,7 @@ Important rules:
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="Polly.Joanna-Neural">${aiResponse}</Say>
-  ${shouldHangup ? '<Hangup/>' : '<Gather input="speech" action="/respond" speechTimeout="2" timeout="10" language="en-IN"/>'}
+  ${shouldHangup ? '<Hangup/>' : '<Gather input="speech" action="/respond" speechTimeout="3" timeout="10" language="en-IN"/>'}
 </Response>`;
 
     res.type('text/xml');
