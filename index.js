@@ -11,7 +11,6 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const conversationHistory = {};
 const callData = {};
 
-// Zoho Access Token refresh karo
 async function getZohoAccessToken() {
   const response = await axios.post('https://accounts.zoho.com/oauth/v2/token', null, {
     params: {
@@ -24,11 +23,12 @@ async function getZohoAccessToken() {
   return response.data.access_token;
 }
 
-// Zoho mein Lead banao
 async function createZohoLead(phone, summary, duration) {
   try {
+    console.log('Creating Zoho lead for:', phone);
     const token = await getZohoAccessToken();
-    await axios.post(`${process.env.ZOHO_API_DOMAIN}/crm/v2/Leads`, {
+    console.log('Zoho token received:', token.substring(0, 20));
+    const result = await axios.post(`${process.env.ZOHO_API_DOMAIN}/crm/v2/Leads`, {
       data: [{
         Last_Name: `Caller ${phone}`,
         Phone: phone,
@@ -42,9 +42,10 @@ async function createZohoLead(phone, summary, duration) {
         'Content-Type': 'application/json'
       }
     });
-    console.log('Zoho lead created for:', phone);
+    console.log('Zoho lead created successfully!', JSON.stringify(result.data));
   } catch (err) {
     console.error('Zoho error:', err.message);
+    console.error('Zoho full error:', JSON.stringify(err.response?.data));
   }
 }
 
@@ -61,6 +62,7 @@ app.post('/incoming-call', (req, res) => {
     startTime: new Date(),
     summary: ''
   };
+  console.log('Incoming call from:', callerPhone, 'SID:', callSid);
 
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -91,7 +93,6 @@ app.post('/respond', async (req, res) => {
   if (!conversationHistory[callSid]) conversationHistory[callSid] = [];
   conversationHistory[callSid].push({ role: 'user', content: userSpeech });
 
-  // Summary update karo
   if (callData[callSid]) {
     callData[callSid].summary += `Customer: ${userSpeech}\n`;
   }
@@ -130,9 +131,9 @@ Important rules:
 
     const shouldHangup = /\bGoodbye\b/i.test(aiResponse);
 
-    // Call khatam hone pe Zoho mein lead banao
     if (shouldHangup && callData[callSid]) {
       const duration = Math.floor((new Date() - callData[callSid].startTime) / 1000);
+      console.log('Goodbye detected — creating Zoho lead');
       await createZohoLead(
         callData[callSid].phone,
         callData[callSid].summary,
@@ -163,13 +164,14 @@ Important rules:
   }
 });
 
-// Call status webhook
 app.post('/call-status', async (req, res) => {
   const callSid = req.body.CallSid;
   const callStatus = req.body.CallStatus;
+  console.log('Call status received:', callStatus, 'SID:', callSid);
 
   if ((callStatus === 'completed' || callStatus === 'no-answer' || callStatus === 'canceled' || callStatus === 'failed') && callData[callSid]) {
     const duration = Math.floor((new Date() - callData[callSid].startTime) / 1000);
+    console.log('Creating Zoho lead from call-status webhook');
     await createZohoLead(
       callData[callSid].phone,
       callData[callSid].summary || 'Call ended without conversation',
