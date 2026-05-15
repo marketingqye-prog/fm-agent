@@ -20,6 +20,10 @@ async function getZohoAccessToken() {
       refresh_token: process.env.ZOHO_REFRESH_TOKEN
     }
   });
+  console.log('Zoho token response:', JSON.stringify(response.data));
+  if (!response.data.access_token) {
+    throw new Error('No access token: ' + JSON.stringify(response.data));
+  }
   return response.data.access_token;
 }
 
@@ -27,7 +31,7 @@ async function createZohoLead(phone, summary, duration) {
   try {
     console.log('Creating Zoho lead for:', phone);
     const token = await getZohoAccessToken();
-    console.log('Zoho token received:', token.substring(0, 20));
+    console.log('Zoho token received OK');
     const result = await axios.post(`${process.env.ZOHO_API_DOMAIN}/crm/v2/Leads`, {
       data: [{
         Last_Name: `Caller ${phone}`,
@@ -67,7 +71,7 @@ app.post('/incoming-call', (req, res) => {
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="Polly.Joanna-Neural">Assalamu Alaikum! Thank you for calling Al Qiraat Al Jadedah Technical Services. This is Nour speaking, how may I help you today?</Say>
-  <Gather input="speech" action="/respond" speechTimeout="2" timeout="10" language="en-IN"/>
+  <Gather input="speech" action="/respond" speechTimeout="3" timeout="30" language="en-IN"/>
 </Response>`;
 
   res.type('text/xml');
@@ -84,7 +88,7 @@ app.post('/respond', async (req, res) => {
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="Polly.Joanna-Neural">I am sorry, I did not catch that. Could you please repeat?</Say>
-  <Gather input="speech" action="/respond" speechTimeout="2" timeout="10" language="en-IN"/>
+  <Gather input="speech" action="/respond" speechTimeout="3" timeout="30" language="en-IN"/>
 </Response>`;
     res.type('text/xml');
     return res.send(twiml);
@@ -146,7 +150,7 @@ Important rules:
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="Polly.Joanna-Neural">${aiResponse}</Say>
-  ${shouldHangup ? '<Hangup/>' : '<Gather input="speech" action="/respond" speechTimeout="3" timeout="10" language="en-IN"/>'}
+  ${shouldHangup ? '<Hangup/>' : '<Gather input="speech" action="/respond" speechTimeout="3" timeout="30" language="en-IN"/>'}
 </Response>`;
 
     res.type('text/xml');
@@ -157,7 +161,7 @@ Important rules:
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="Polly.Joanna-Neural">Sorry, please try again.</Say>
-  <Gather input="speech" action="/respond" speechTimeout="2" timeout="10" language="en-IN"/>
+  <Gather input="speech" action="/respond" speechTimeout="3" timeout="30" language="en-IN"/>
 </Response>`;
     res.type('text/xml');
     res.send(twiml);
