@@ -18,7 +18,7 @@ app.use((req, res, next) => {
 });
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+const client = twilio(process.env.TWILIO_API_KEY, process.env.TWILIO_API_SECRET, { accountSid: process.env.TWILIO_ACCOUNT_SID });
 
 const conversationHistory = {};
 const callData = {};
@@ -486,4 +486,4 @@ app.listen(PORT, () => {
   console.log(`FM Agent server running on port ${PORT}`);
   console.log('Nour is ready to take calls!');
   console.log(`Dashboard routes: /dashboard/stats, /dashboard/calls, /dashboard/call, /dashboard/script, /dashboard/live`);
-});
+});git add .
