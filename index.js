@@ -141,10 +141,10 @@ app.get('/', (req, res) => {
   `);
 });
 
-// Dashboard HTML file serve karo (agar same folder mein rakho)
-// app.get('/dashboard', (req, res) => {
-//   res.sendFile(__dirname + '/dashboard.html');
-// });
+// Dashboard HTML file serve karo
+app.get('/dashboard', (req, res) => {
+  res.sendFile(__dirname + '/dashboard.html');
+});
 
 // ============================================
 // EXISTING CALL ROUTES — UPDATED
