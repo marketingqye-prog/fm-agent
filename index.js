@@ -486,4 +486,4 @@ app.listen(PORT, () => {
   console.log(`FM Agent server running on port ${PORT}`);
   console.log('Nour is ready to take calls!');
   console.log(`Dashboard routes: /dashboard/stats, /dashboard/calls, /dashboard/call, /dashboard/script, /dashboard/live`);
-});git add .
+});
