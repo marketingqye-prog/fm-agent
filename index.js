@@ -146,6 +146,15 @@ app.get('/dashboard', (req, res) => {
   res.sendFile(__dirname + '/dashboard.html');
 });
 
+// Check environment variables
+app.get('/check-env', (req, res) => {
+  res.json({
+    sid: process.env.TWILIO_ACCOUNT_SID,
+    token: process.env.TWILIO_AUTH_TOKEN ? process.env.TWILIO_AUTH_TOKEN.substring(0, 6) + '...' : 'NOT SET',
+    phone: process.env.TWILIO_PHONE_NUMBER
+  });
+});
+
 // ============================================
 // EXISTING CALL ROUTES — UPDATED
 // ============================================
