@@ -3,13 +3,83 @@ const express = require('express');
 const app = express();
 const Groq = require('groq-sdk');
 const axios = require('axios');
+const twilio = require('twilio');
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// CORS — Dashboard ke liye zaroori
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  next();
+});
+
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+
 const conversationHistory = {};
 const callData = {};
+
+// ============================================
+// PHASE 4 — DASHBOARD STATE
+// ============================================
+let callHistory = [];       // Sab calls ka record
+let liveClients = [];       // SSE connected clients
+let currentScript = {
+  greeting: "Assalamu Alaikum! Thank you for calling Al Qiraat Al Jadedah Technical Services. This is Nour speaking, how may I help you today?",
+  greetingArabic: "السلام عليكم! أهلاً وسهلاً بكم في شركة القراءات الجديدة. أنا نور، كيف يمكنني مساعدتك؟",
+  personality: `Your name is Nour. You work as a customer service representative for Al Qiraat Al Jadedah Technical Services, a Facility Management company in UAE.
+
+Important rules:
+- You are a human customer service representative. Never say you are an AI, robot, or program.
+- If anyone asks if you are an AI or robot, say "No, I am Nour, a customer service representative."
+- MOST IMPORTANT: Always reply in the EXACT same language the customer uses:
+  * Customer speaks Hindi → Reply in Hindi only
+  * Customer speaks English → Reply in English only
+  * Customer speaks Arabic → Reply in Arabic only
+- Be warm, friendly and professional.
+- Keep responses very short — maximum 1-2 sentences.
+- Only say "Thank you for calling. Goodbye!" when customer explicitly uses words like "bye", "goodbye", "end call".`,
+  closing: "Shukriya! AQAJ se contact karne ke liye bahut dhanyawad. Allah Hafiz!",
+  triggerWords: "goodbye, bye, khuda hafiz, allah hafiz, ma'a salama, alvida"
+};
+
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
+
+// Call record save/update karo
+function saveCallRecord(callSid, updates) {
+  const existing = callHistory.find(c => c.callSid === callSid);
+  if (existing) {
+    Object.assign(existing, updates);
+  } else {
+    callHistory.push({ callSid, ...updates });
+  }
+}
+
+// Live Monitor ko broadcast karo
+function broadcastLive(data) {
+  liveClients.forEach(client => {
+    try {
+      client.write(`data: ${JSON.stringify(data)}\n\n`);
+    } catch (e) {}
+  });
+}
+
+// Duration format karo
+function formatDuration(secs) {
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+// ============================================
+// ZOHO CRM FUNCTIONS (unchanged)
+// ============================================
 
 async function getZohoAccessToken() {
   const response = await axios.post('https://accounts.zoho.com/oauth/v2/token', null, {
@@ -47,30 +117,77 @@ async function createZohoLead(phone, summary, duration) {
       }
     });
     console.log('Zoho lead created successfully!', JSON.stringify(result.data));
+
+    // Lead ID wapas lo
+    const leadId = result.data?.data?.[0]?.details?.id || null;
+    return leadId;
+
   } catch (err) {
     console.error('Zoho error:', err.message);
     console.error('Zoho full error:', JSON.stringify(err.response?.data));
+    return null;
   }
 }
 
+// ============================================
+// BASIC ROUTES
+// ============================================
+
 app.get('/', (req, res) => {
-  res.send('FM Agent Server Running!');
+  res.send(`
+    <h2>🤖 Nour AI Agent — Running!</h2>
+    <p>Server: fm-agent.onrender.com</p>
+    <p><a href="/dashboard">📊 Open Dashboard</a></p>
+  `);
 });
+
+// Dashboard HTML file serve karo (agar same folder mein rakho)
+// app.get('/dashboard', (req, res) => {
+//   res.sendFile(__dirname + '/dashboard.html');
+// });
+
+// ============================================
+// EXISTING CALL ROUTES — UPDATED
+// ============================================
 
 app.post('/incoming-call', (req, res) => {
   const callSid = req.body.CallSid;
   const callerPhone = req.body.From || 'Unknown';
+
   conversationHistory[callSid] = [];
   callData[callSid] = {
     phone: callerPhone,
     startTime: new Date(),
     summary: ''
   };
+
   console.log('Incoming call from:', callerPhone, 'SID:', callSid);
+
+  // ✅ PHASE 4: Call history mein save karo
+  saveCallRecord(callSid, {
+    callSid,
+    from: callerPhone,
+    to: req.body.To || process.env.TWILIO_PHONE_NUMBER,
+    direction: 'inbound',
+    startTime: new Date().toISOString(),
+    duration: 0,
+    summary: '',
+    zohoLeadId: null,
+    language: 'Auto'
+  });
+
+  // ✅ PHASE 4: Live monitor ko batao — call shuru
+  broadcastLive({
+    type: 'call_start',
+    from: callerPhone,
+    language: 'Detecting...'
+  });
+
+  const greetingMsg = currentScript.greeting;
 
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="Polly.Joanna-Neural">Assalamu Alaikum! Thank you for calling Al Qiraat Al Jadedah Technical Services. This is Nour speaking, how may I help you today?</Say>
+  <Say voice="Polly.Joanna-Neural">${greetingMsg}</Say>
   <Gather input="speech" action="/respond" speechTimeout="3" timeout="30" language="en-IN"/>
 </Response>`;
 
@@ -101,24 +218,20 @@ app.post('/respond', async (req, res) => {
     callData[callSid].summary += `Customer: ${userSpeech}\n`;
   }
 
+  // ✅ PHASE 4: Customer ki baat live broadcast karo
+  broadcastLive({
+    type: 'message',
+    role: 'user',
+    text: userSpeech
+  });
+
   try {
     const completion = await groq.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
       messages: [
         {
           role: 'system',
-          content: `Your name is Nour. You work as a customer service representative for Al Qiraat Al Jadedah Technical Services, a Facility Management company in UAE.
-
-Important rules:
-- You are a human customer service representative. Never say you are an AI, robot, or program.
-- If anyone asks if you are an AI or robot, say "No, I am Nour, a customer service representative."
-- MOST IMPORTANT: Always reply in the EXACT same language the customer uses:
-  * Customer speaks Hindi → Reply in Hindi only
-  * Customer speaks English → Reply in English only
-  * Customer speaks Arabic → Reply in Arabic only
-- Be warm, friendly and professional.
-- Keep responses very short — maximum 1-2 sentences.
-- Only say "Thank you for calling. Goodbye!" when customer explicitly uses words like "bye", "goodbye", "end call". Never say Goodbye on your own.`
+          content: currentScript.personality  // ✅ PHASE 4: Script Editor se update hoga
         },
         ...conversationHistory[callSid]
       ],
@@ -133,16 +246,35 @@ Important rules:
       callData[callSid].summary += `Nour: ${aiResponse}\n`;
     }
 
+    // ✅ PHASE 4: Nour ka jawab live broadcast karo
+    broadcastLive({
+      type: 'message',
+      role: 'assistant',
+      text: aiResponse
+    });
+
     const shouldHangup = /\bGoodbye\b/i.test(aiResponse);
 
     if (shouldHangup && callData[callSid]) {
       const duration = Math.floor((new Date() - callData[callSid].startTime) / 1000);
       console.log('Goodbye detected — creating Zoho lead');
-      await createZohoLead(
+
+      const zohoLeadId = await createZohoLead(
         callData[callSid].phone,
         callData[callSid].summary,
         duration
       );
+
+      // ✅ PHASE 4: Call record update karo
+      saveCallRecord(callSid, {
+        duration,
+        summary: callData[callSid].summary,
+        zohoLeadId
+      });
+
+      // ✅ PHASE 4: Live monitor ko batao — call khatam
+      broadcastLive({ type: 'call_end' });
+
       delete callData[callSid];
       delete conversationHistory[callSid];
     }
@@ -171,16 +303,34 @@ Important rules:
 app.post('/call-status', async (req, res) => {
   const callSid = req.body.CallSid;
   const callStatus = req.body.CallStatus;
+  const callDuration = parseInt(req.body.CallDuration) || 0;
+
   console.log('Call status received:', callStatus, 'SID:', callSid);
 
-  if ((callStatus === 'completed' || callStatus === 'no-answer' || callStatus === 'canceled' || callStatus === 'failed') && callData[callSid]) {
-    const duration = Math.floor((new Date() - callData[callSid].startTime) / 1000);
+  if (
+    (callStatus === 'completed' || callStatus === 'no-answer' ||
+     callStatus === 'canceled' || callStatus === 'failed') &&
+    callData[callSid]
+  ) {
     console.log('Creating Zoho lead from call-status webhook');
-    await createZohoLead(
+
+    const zohoLeadId = await createZohoLead(
       callData[callSid].phone,
       callData[callSid].summary || 'Call ended without conversation',
-      duration
+      callDuration
     );
+
+    // ✅ PHASE 4: Final call record update karo
+    saveCallRecord(callSid, {
+      duration: callDuration,
+      summary: callData[callSid].summary || 'Call ended without conversation',
+      zohoLeadId,
+      status: callStatus
+    });
+
+    // ✅ PHASE 4: Live monitor — call end
+    broadcastLive({ type: 'call_end' });
+
     delete callData[callSid];
     delete conversationHistory[callSid];
   }
@@ -188,8 +338,143 @@ app.post('/call-status', async (req, res) => {
   res.sendStatus(200);
 });
 
+// ============================================
+// PHASE 4 — DASHBOARD ROUTES
+// ============================================
+
+// 1. STATS
+app.get('/dashboard/stats', (req, res) => {
+  const today = new Date().toDateString();
+
+  const todayCalls = callHistory.filter(c =>
+    new Date(c.startTime).toDateString() === today
+  ).length;
+
+  const now = new Date();
+  const monthCalls = callHistory.filter(c => {
+    const d = new Date(c.startTime);
+    return d.getMonth() === now.getMonth() &&
+           d.getFullYear() === now.getFullYear();
+  }).length;
+
+  const inbound = callHistory.filter(c => c.direction === 'inbound').length;
+  const outbound = callHistory.filter(c => c.direction === 'outbound').length;
+  const withLeads = callHistory.filter(c => c.zohoLeadId).length;
+
+  const totalDuration = callHistory.reduce((sum, c) => sum + (parseInt(c.duration) || 0), 0);
+  const avgSecs = callHistory.length > 0 ? Math.round(totalDuration / callHistory.length) : 0;
+
+  res.json({
+    todayCalls,
+    monthCalls,
+    inbound,
+    outbound,
+    zohoLeads: withLeads,
+    avgDuration: formatDuration(avgSecs),
+    totalCalls: callHistory.length,
+    recentCalls: callHistory.slice(-10).reverse()
+  });
+});
+
+// 2. CALL HISTORY
+app.get('/dashboard/calls', (req, res) => {
+  res.json({
+    calls: callHistory.slice().reverse(),
+    total: callHistory.length
+  });
+});
+
+// 3. OUTBOUND CALL
+app.post('/dashboard/call', async (req, res) => {
+  const { to } = req.body;
+  if (!to) return res.json({ success: false, error: 'Phone number required' });
+
+  try {
+    const call = await client.calls.create({
+      url: `${process.env.SERVER_URL}/incoming-call`,
+      to: to,
+      from: process.env.TWILIO_PHONE_NUMBER,
+    });
+
+    console.log('Outbound call made to:', to, 'SID:', call.sid);
+
+    // Outbound call bhi history mein save karo
+    saveCallRecord(call.sid, {
+      callSid: call.sid,
+      from: process.env.TWILIO_PHONE_NUMBER,
+      to: to,
+      direction: 'outbound',
+      startTime: new Date().toISOString(),
+      duration: 0,
+      summary: '',
+      zohoLeadId: null,
+      language: 'Auto'
+    });
+
+    res.json({ success: true, callSid: call.sid });
+
+  } catch (err) {
+    console.error('Outbound call error:', err.message);
+    res.json({ success: false, error: err.message });
+  }
+});
+
+// 4. SCRIPT UPDATE
+app.post('/dashboard/script', (req, res) => {
+  const { greeting, greetingArabic, personality, closing, triggerWords } = req.body;
+
+  if (greeting) currentScript.greeting = greeting;
+  if (greetingArabic) currentScript.greetingArabic = greetingArabic;
+  if (personality) currentScript.personality = personality;
+  if (closing) currentScript.closing = closing;
+  if (triggerWords) currentScript.triggerWords = triggerWords;
+
+  console.log('✅ Nour script updated via dashboard');
+  res.json({ success: true, message: 'Script updated! Next call will use new script.' });
+});
+
+// 5. LIVE MONITOR — SSE
+app.get('/dashboard/live', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.flushHeaders();
+
+  // Connection confirm karo
+  res.write(`data: ${JSON.stringify({ type: 'connected', message: 'Live monitor active' })}\n\n`);
+
+  // Heartbeat — connection alive rakhne ke liye
+  const heartbeat = setInterval(() => {
+    res.write(`data: ${JSON.stringify({ type: 'ping' })}\n\n`);
+  }, 20000);
+
+  liveClients.push(res);
+  console.log(`👁️ Live client connected. Total: ${liveClients.length}`);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    liveClients = liveClients.filter(c => c !== res);
+    console.log(`👁️ Live client disconnected. Total: ${liveClients.length}`);
+  });
+});
+
+// 6. LIVE STATUS — Polling fallback
+app.get('/dashboard/live-status', (req, res) => {
+  const activeCalls = Object.keys(callData).length;
+  res.json({
+    type: activeCalls > 0 ? 'active' : 'idle',
+    activeCalls,
+    message: activeCalls > 0 ? 'Call in progress' : 'No active call'
+  });
+});
+
+// ============================================
+// SERVER START
+// ============================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`FM Agent server running on port ${PORT}`);
   console.log('Nour is ready to take calls!');
+  console.log(`Dashboard routes: /dashboard/stats, /dashboard/calls, /dashboard/call, /dashboard/script, /dashboard/live`);
 });
