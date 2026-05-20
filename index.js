@@ -18,7 +18,7 @@ app.use((req, res, next) => {
 });
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const client = twilio(process.env.TWILIO_API_KEY, process.env.TWILIO_API_SECRET, { accountSid: process.env.TWILIO_ACCOUNT_SID });
+const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
 const conversationHistory = {};
 const callData = {};
@@ -476,6 +476,179 @@ app.get('/dashboard/live-status', (req, res) => {
     activeCalls,
     message: activeCalls > 0 ? 'Call in progress' : 'No active call'
   });
+});
+
+// ============================================
+// PHASE 5 — ZOHO CRM WIDGET
+// ============================================
+
+app.get('/zoho-widget', (req, res) => {
+  const phone = req.query.phone || '';
+  const leadName = req.query.name || 'Customer';
+  const leadId = req.query.id || '';
+
+  res.send(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nour AI Call</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f0f4f8;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .card {
+      background: white;
+      border-radius: 16px;
+      padding: 30px;
+      width: 100%;
+      max-width: 400px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+      text-align: center;
+    }
+    .logo {
+      width: 70px;
+      height: 70px;
+      background: linear-gradient(135deg, #c9a84c, #a07830);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 32px;
+      margin: 0 auto 16px;
+    }
+    h2 { font-size: 20px; color: #1a1a2e; margin-bottom: 6px; }
+    .subtitle { font-size: 13px; color: #666; margin-bottom: 24px; }
+    .lead-info {
+      background: #f8f9fa;
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 20px;
+      text-align: left;
+    }
+    .lead-info label { font-size: 11px; color: #999; text-transform: uppercase; letter-spacing: 1px; }
+    .lead-info p { font-size: 15px; color: #1a1a2e; font-weight: 600; margin-top: 2px; }
+    .phone-input {
+      width: 100%;
+      padding: 14px;
+      border: 2px solid #e0e0e0;
+      border-radius: 10px;
+      font-size: 18px;
+      text-align: center;
+      margin-bottom: 16px;
+      outline: none;
+      font-family: monospace;
+      letter-spacing: 2px;
+    }
+    .phone-input:focus { border-color: #c9a84c; }
+    .call-btn {
+      width: 100%;
+      padding: 16px;
+      background: linear-gradient(135deg, #28a745, #1e7e34);
+      color: white;
+      border: none;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+    .call-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(40,167,69,0.4); }
+    .call-btn:disabled { background: #ccc; transform: none; box-shadow: none; cursor: not-allowed; }
+    .status {
+      margin-top: 16px;
+      padding: 12px;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 500;
+      display: none;
+    }
+    .status.success { background: #d4edda; color: #155724; display: block; }
+    .status.error { background: #f8d7da; color: #721c24; display: block; }
+    .status.calling { background: #d1ecf1; color: #0c5460; display: block; }
+    .footer { font-size: 11px; color: #999; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">🤖</div>
+    <h2>Nour AI Agent</h2>
+    <p class="subtitle">Al Qiraat Al Jadedah Technical Services</p>
+
+    <div class="lead-info">
+      <label>Lead Name</label>
+      <p id="lead-name">${leadName}</p>
+    </div>
+
+    <input type="tel" class="phone-input" id="phone-input"
+      value="${phone}" placeholder="+971XXXXXXXXX">
+
+    <button class="call-btn" id="call-btn" onclick="makeCall()">
+      📞 Call with Nour
+    </button>
+
+    <div class="status" id="status"></div>
+
+    <p class="footer">Nour will call the customer automatically</p>
+  </div>
+
+  <script>
+    async function makeCall() {
+      const phone = document.getElementById('phone-input').value.trim();
+      const btn = document.getElementById('call-btn');
+      const status = document.getElementById('status');
+
+      if (!phone || phone.length < 8) {
+        status.className = 'status error';
+        status.textContent = '❌ Please enter a valid phone number';
+        return;
+      }
+
+      btn.disabled = true;
+      btn.innerHTML = '⏳ Calling...';
+      status.className = 'status calling';
+      status.textContent = '📞 Nour is calling ' + phone + '...';
+
+      try {
+        const response = await fetch('https://fm-agent.onrender.com/dashboard/call', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ to: phone })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          status.className = 'status success';
+          status.textContent = '✅ Nour is calling ' + phone + '! Call SID: ' + data.callSid;
+          btn.innerHTML = '✅ Call Initiated';
+        } else {
+          status.className = 'status error';
+          status.textContent = '❌ Error: ' + (data.error || 'Unknown error');
+          btn.disabled = false;
+          btn.innerHTML = '📞 Call with Nour';
+        }
+      } catch (err) {
+        status.className = 'status error';
+        status.textContent = '❌ Connection error. Try again.';
+        btn.disabled = false;
+        btn.innerHTML = '📞 Call with Nour';
+      }
+    }
+  </script>
+</body>
+</html>`);
 });
 
 // ============================================
